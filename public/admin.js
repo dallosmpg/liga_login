@@ -17,6 +17,10 @@ const adminElements = {
   logoutButton: document.getElementById("logout-button"),
 };
 
+const collapsedTaskIds = new Set();
+const editingTaskIds = new Set();
+let renderedTasks = [];
+
 function adminFlash(message, kind = "") {
   adminElements.flash.textContent = message;
   adminElements.flash.className = `flash ${kind}`.trim();
@@ -69,6 +73,16 @@ function createChip(text) {
   return createElement("span", { className: "chip", textContent: text });
 }
 
+function createButton(text, className, onClick) {
+  const button = createElement("button", {
+    className: `button ${className}`,
+    textContent: text,
+  });
+  button.type = "button";
+  button.addEventListener("click", onClick);
+  return button;
+}
+
 function formatDateTime(value) {
   return value ? new Date(value).toLocaleString("hu-HU") : "-";
 }
@@ -92,6 +106,143 @@ function toggleGpsFields() {
     input.required = gpsEnabled;
     input.closest(".gps-field").classList.toggle("is-disabled", !gpsEnabled);
   });
+}
+
+function appendOption(select, value, text, selectedValue) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = text;
+  option.selected = value === selectedValue;
+  select.append(option);
+}
+
+function createField(label, control, className = "") {
+  const field = createElement("label", {
+    className: `field ${className}`.trim(),
+  });
+  field.append(createElement("span", { textContent: label }), control);
+  return field;
+}
+
+function setGpsControlsEnabled(select, fields) {
+  const gpsEnabled = select.value === "gps";
+  fields.forEach(({ input, field }) => {
+    input.disabled = !gpsEnabled;
+    input.required = gpsEnabled;
+    field.classList.toggle("is-disabled", !gpsEnabled);
+  });
+}
+
+function createEditForm(task) {
+  const form = createElement("form", {
+    className: "edit-task-form grid two compact-grid",
+  });
+
+  const nameInput = document.createElement("input");
+  nameInput.required = true;
+  nameInput.value = task.name;
+
+  const dateInput = document.createElement("input");
+  dateInput.required = true;
+  dateInput.type = "date";
+  dateInput.value = task.taskDate;
+
+  const validationSelect = document.createElement("select");
+  appendOption(
+    validationSelect,
+    "open",
+    "QR/link alapján, helyellenőrzés nélkül",
+    task.checkinValidation,
+  );
+  appendOption(
+    validationSelect,
+    "gps",
+    "QR-kód vagy GPS hely alapján",
+    task.checkinValidation,
+  );
+
+  const latitudeInput = document.createElement("input");
+  latitudeInput.type = "number";
+  latitudeInput.step = "0.000001";
+  latitudeInput.min = "-90";
+  latitudeInput.max = "90";
+  latitudeInput.value = task.checkinLatitude ?? "";
+
+  const longitudeInput = document.createElement("input");
+  longitudeInput.type = "number";
+  longitudeInput.step = "0.000001";
+  longitudeInput.min = "-180";
+  longitudeInput.max = "180";
+  longitudeInput.value = task.checkinLongitude ?? "";
+
+  const radiusInput = document.createElement("input");
+  radiusInput.type = "number";
+  radiusInput.step = "1";
+  radiusInput.min = "10";
+  radiusInput.max = "10000";
+  radiusInput.value = task.checkinRadiusMeters ?? "";
+
+  const latitudeField = createField("GPS szélesség", latitudeInput, "gps-field");
+  const longitudeField = createField("GPS hosszúság", longitudeInput, "gps-field");
+  const radiusField = createField("Sugár méterben", radiusInput, "gps-field");
+  const gpsFields = [
+    { input: latitudeInput, field: latitudeField },
+    { input: longitudeInput, field: longitudeField },
+    { input: radiusInput, field: radiusField },
+  ];
+
+  validationSelect.addEventListener("change", () =>
+    setGpsControlsEnabled(validationSelect, gpsFields),
+  );
+  setGpsControlsEnabled(validationSelect, gpsFields);
+
+  const formActions = createElement("div", { className: "actions form-actions" });
+  const saveButton = createElement("button", {
+    className: "button primary",
+    textContent: "Mentés",
+  });
+  saveButton.type = "submit";
+  const cancelButton = createButton("Mégse", "ghost", () => {
+    editingTaskIds.delete(task.id);
+    renderTasks(renderedTasks);
+  });
+  formActions.append(saveButton, cancelButton);
+
+  form.append(
+    createField("Feladat neve", nameInput),
+    createField("Feladat dátuma", dateInput),
+    createField("Bejelentkezés módja", validationSelect),
+    latitudeField,
+    longitudeField,
+    radiusField,
+    formActions,
+  );
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    try {
+      await adminRequest(`/api/admin/tasks/${task.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: nameInput.value.trim(),
+          taskDate: dateInput.value,
+          checkinValidation: validationSelect.value,
+          checkinLatitude: latitudeInput.value,
+          checkinLongitude: longitudeInput.value,
+          checkinRadiusMeters: radiusInput.value,
+        }),
+      });
+      editingTaskIds.delete(task.id);
+      await loadTasks();
+      adminFlash("A feladat módosítva.", "success");
+    } catch (error) {
+      adminFlash(error.message, "error");
+    }
+  });
+
+  return form;
 }
 
 function renderPilotList(task) {
@@ -158,6 +309,7 @@ function renderPilotList(task) {
 }
 
 function renderTasks(tasks) {
+  renderedTasks = tasks;
   adminElements.tasksList.replaceChildren();
 
   if (!tasks.length) {
@@ -174,6 +326,10 @@ function renderTasks(tasks) {
 
   const cards = tasks.map((task) => {
     const card = createElement("article", { className: "task-card" });
+    const isCollapsed = collapsedTaskIds.has(task.id);
+    const isEditing = editingTaskIds.has(task.id);
+    card.classList.toggle("is-collapsed", isCollapsed);
+
     const header = createElement("div", { className: "section-header" });
     const titleGroup = createElement("div");
     titleGroup.append(
@@ -187,7 +343,43 @@ function renderTasks(tasks) {
       createChip(`${task.uploadCount} feltöltés`),
       createChip(checkinValidationLabel(task)),
     );
-    header.append(titleGroup, counts);
+    const headerActions = createElement("div", { className: "actions task-header-actions" });
+    headerActions.append(
+      createButton(isCollapsed ? "Megnyitás" : "Összecsukás", "ghost", () => {
+        if (collapsedTaskIds.has(task.id)) {
+          collapsedTaskIds.delete(task.id);
+        } else {
+          collapsedTaskIds.add(task.id);
+          editingTaskIds.delete(task.id);
+        }
+        renderTasks(renderedTasks);
+      }),
+      createButton("Szerkesztés", "secondary", () => {
+        editingTaskIds.add(task.id);
+        collapsedTaskIds.delete(task.id);
+        renderTasks(renderedTasks);
+      }),
+      createButton("Törlés", "danger", async () => {
+        if (
+          !window.confirm(
+            `Biztosan törlöd ezt a feladatot és minden hozzá tartozó bejelentkezést/feltöltést? (${task.name})`,
+          )
+        ) {
+          return;
+        }
+
+        try {
+          await adminRequest(`/api/admin/tasks/${task.id}`, { method: "DELETE" });
+          collapsedTaskIds.delete(task.id);
+          editingTaskIds.delete(task.id);
+          await loadTasks();
+          adminFlash("A feladat törölve.", "success");
+        } catch (error) {
+          adminFlash(error.message, "error");
+        }
+      }),
+    );
+    header.append(titleGroup, counts, headerActions);
 
     const tokenRow = createElement("div", { className: "token-row" });
     const publicLink = createElement("a", { textContent: task.publicUrl });
@@ -212,13 +404,22 @@ function renderTasks(tasks) {
     });
 
     actions.append(
-      createLinkButton("QR letöltése", task.qrUrl, "primary"),
+      createLinkButton("QR PNG letöltése", task.qrUrl, "primary"),
       createLinkButton("ZIP letöltése", task.zipUrl, "secondary"),
       createLinkButton("Pilótalista CSV", task.checkinsCsvUrl, "secondary"),
       copyButton,
     );
 
-    card.append(header, tokenRow, actions, renderPilotList(task));
+    const body = createElement("div", { className: "task-card-body" });
+    if (isEditing) {
+      body.append(createEditForm(task));
+    }
+    body.append(tokenRow, actions, renderPilotList(task));
+
+    card.append(header);
+    if (!isCollapsed) {
+      card.append(body);
+    }
     return card;
   });
 

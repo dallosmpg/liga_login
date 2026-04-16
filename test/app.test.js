@@ -90,6 +90,21 @@ test("store supports task creation, check-in, duplicate protection, delete, and 
       stats,
     );
     assert.equal(secondUpload.originalName, "replacement.igc");
+
+    const updatedTask = store.updateTask(task.id, {
+      name: "Task 1 edited",
+      taskDate: "2026-04-12",
+      checkinValidation: "open",
+    });
+    assert.equal(updatedTask.name, "Task 1 edited");
+    assert.equal(updatedTask.taskDate, "2026-04-12");
+    assert.equal(typeof updatedTask.updatedAt, "string");
+
+    const deletedTask = store.deleteTask(task.id);
+    assert.equal(deletedTask.id, task.id);
+    assert.equal(store.listTasks().length, 0);
+    assert.equal(store.listCheckins(task.id).length, 0);
+    assert.equal(store.listUploads(task.id).length, 0);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -277,14 +292,14 @@ test("shouldGenerateTaskQr detects missing and stale QR URL metadata", () => {
     baseUrl: "https://task.xcliga.xyz",
   });
   const qrDir = path.join(config.storageDir, "tasks", task.id, "qr");
-  const qrPath = path.join(qrDir, "task.svg");
+  const qrPath = path.join(qrDir, "task.png");
   const metadataPath = path.join(qrDir, "task.url");
 
   try {
     assert.equal(shouldGenerateTaskQr(task, config), true);
 
     fs.mkdirSync(qrDir, { recursive: true });
-    fs.writeFileSync(qrPath, "<svg></svg>");
+    fs.writeFileSync(qrPath, Buffer.from("png"));
     assert.equal(shouldGenerateTaskQr(task, config), true);
 
     fs.writeFileSync(metadataPath, "http://localhost:3000/task/token-1\n");

@@ -307,6 +307,22 @@ select {
   gap: 14px;
 }
 
+.task-card.is-collapsed {
+  gap: 0;
+}
+
+.task-card-body,
+.edit-task-form {
+  display: grid;
+  gap: 14px;
+}
+
+.edit-task-form {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
 .task-card h3 {
   margin: 0;
   font-size: 1.2rem;
@@ -367,6 +383,15 @@ select {
   min-width: 0;
 }
 
+.task-header-actions {
+  justify-content: flex-end;
+}
+
+.form-actions {
+  align-self: end;
+  grid-column: 1 / -1;
+}
+
 .section-header,
 .header-row {
   display: flex;
@@ -389,6 +414,14 @@ select {
   .header-row {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .section-header {
+    display: grid;
+  }
+
+  .task-header-actions {
+    justify-content: flex-start;
   }
 
   .hero-card,
