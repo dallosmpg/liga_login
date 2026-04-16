@@ -41,6 +41,9 @@ zip -v
 cp .env.example .env
 ```
 
+The app loads `.env` from the project root on startup. Real environment
+variables still take precedence over values in `.env`.
+
 4. Start the app:
 
 ```bash
@@ -70,12 +73,13 @@ This app is meant to run well on a small Hetzner VPS without a database.
 
 ```bash
 sudo apt update
-sudo apt install -y nodejs npm qrencode zip nginx
+sudo apt install -y nodejs npm qrencode zip caddy
+sudo npm install -g pm2
 ```
 
 ### Environment
 
-Set these at minimum:
+Create `/srv/liga_login/.env` and set these at minimum:
 
 - `PORT=3000`
 - `BASE_URL=https://your-domain.example`
@@ -84,13 +88,54 @@ Set these at minimum:
 - `SECURE_COOKIES=true`
 - `TRUST_PROXY=true`
 
-### systemd
+### PM2
 
-Example service file: [deploy/liga-login.service](/Users/martin/liga_login/deploy/liga-login.service)
+Start the app from the deploy directory:
 
-### nginx
+```bash
+cd /srv/liga_login
+NODE_ENV=production pm2 start server.js --name liga-login
+pm2 startup
+pm2 save
+```
 
-Example reverse proxy config: [deploy/nginx.conf](/Users/martin/liga_login/deploy/nginx.conf)
+`pm2 startup` prints a `sudo ...` command. Run that printed command once so PM2
+starts again after a reboot.
+
+After changing `.env` or deploying new code, restart the app:
+
+```bash
+pm2 restart liga-login
+```
+
+Useful checks:
+
+```bash
+pm2 status
+pm2 logs liga-login
+```
+
+### Caddy
+
+Example `/etc/caddy/Caddyfile`:
+
+```caddyfile
+your-domain.example {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+Reload Caddy after changing the Caddyfile:
+
+```bash
+sudo caddy reload --config /etc/caddy/Caddyfile
+```
+
+Caddy terminates HTTPS and proxies to the local Node process. Keep these values
+enabled in `/srv/liga_login/.env` when running behind Caddy:
+
+- `SECURE_COOKIES=true`
+- `TRUST_PROXY=true`
 
 ## Testing
 
