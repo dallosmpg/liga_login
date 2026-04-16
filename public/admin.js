@@ -38,70 +38,107 @@ function setAuthenticated(isAuthenticated) {
   adminElements.logoutButton.classList.toggle("hidden", !isAuthenticated);
 }
 
+function createElement(tagName, options = {}) {
+  const element = document.createElement(tagName);
+
+  if (options.className) {
+    element.className = options.className;
+  }
+
+  if (options.textContent != null) {
+    element.textContent = options.textContent;
+  }
+
+  return element;
+}
+
+function createLinkButton(text, href, className) {
+  const link = createElement("a", {
+    className: `button ${className}`,
+    textContent: text,
+  });
+  link.href = href;
+  return link;
+}
+
+function createChip(text) {
+  return createElement("span", { className: "chip", textContent: text });
+}
+
 function renderTasks(tasks) {
+  adminElements.tasksList.replaceChildren();
+
   if (!tasks.length) {
-    adminElements.tasksList.innerHTML =
-      '<div class="task-card"><p class="muted">Még nincs létrehozott feladat.</p></div>';
+    const card = createElement("div", { className: "task-card" });
+    card.append(
+      createElement("p", {
+        className: "muted",
+        textContent: "Még nincs létrehozott feladat.",
+      }),
+    );
+    adminElements.tasksList.append(card);
     return;
   }
 
-  adminElements.tasksList.innerHTML = tasks
-    .map(
-      (task) => `
-        <article class="task-card">
-          <div class="section-header">
-            <div>
-              <h3>${task.name}</h3>
-              <p class="muted">${task.taskDate}</p>
-            </div>
-            <div class="pill-row">
-              <span class="chip">${task.checkinCount} bejelentkezés</span>
-              <span class="chip">${task.uploadCount} feltöltés</span>
-            </div>
-          </div>
+  const cards = tasks.map((task) => {
+    const card = createElement("article", { className: "task-card" });
+    const header = createElement("div", { className: "section-header" });
+    const titleGroup = createElement("div");
+    titleGroup.append(
+      createElement("h3", { textContent: task.name }),
+      createElement("p", { className: "muted", textContent: task.taskDate }),
+    );
 
-          <div class="token-row">
-            <a href="${task.publicUrl}" target="_blank" rel="noreferrer">${task.publicUrl}</a>
-          </div>
+    const counts = createElement("div", { className: "pill-row" });
+    counts.append(
+      createChip(`${task.checkinCount} bejelentkezés`),
+      createChip(`${task.uploadCount} feltöltés`),
+    );
+    header.append(titleGroup, counts);
 
-          <div class="actions">
-            <a class="button primary" href="${task.qrUrl}">QR letöltése</a>
-            <a class="button secondary" href="${task.zipUrl}">ZIP letöltése</a>
-            <button class="button ghost" type="button" data-copy="${task.publicUrl}">Link másolása</button>
-          </div>
+    const tokenRow = createElement("div", { className: "token-row" });
+    const publicLink = createElement("a", { textContent: task.publicUrl });
+    publicLink.href = task.publicUrl;
+    publicLink.target = "_blank";
+    publicLink.rel = "noreferrer";
+    tokenRow.append(publicLink);
 
-          <div class="pill-row">
-            ${task.checkins
-              .map(
-                (item) =>
-                  `<span class="chip">BE ${item.participantId}</span>`,
-              )
-              .join("")}
-          </div>
-
-          <div class="pill-row">
-            ${task.uploads
-              .map(
-                (item) =>
-                  `<span class="chip">IGC ${item.participantId}.igc</span>`,
-              )
-              .join("")}
-          </div>
-        </article>
-      `,
-    )
-    .join("");
-
-  adminElements.tasksList.querySelectorAll("[data-copy]").forEach((button) => {
-    button.addEventListener("click", async () => {
+    const actions = createElement("div", { className: "actions" });
+    const copyButton = createElement("button", {
+      className: "button ghost",
+      textContent: "Link másolása",
+    });
+    copyButton.type = "button";
+    copyButton.addEventListener("click", async () => {
       try {
-        await navigator.clipboard.writeText(button.dataset.copy);
+        await navigator.clipboard.writeText(task.publicUrl);
         adminFlash("A feladat linkje vágólapra másolva.", "success");
       } catch (_error) {
         adminFlash("A vágólap elérése nem sikerült.", "error");
       }
     });
+
+    actions.append(
+      createLinkButton("QR letöltése", task.qrUrl, "primary"),
+      createLinkButton("ZIP letöltése", task.zipUrl, "secondary"),
+      copyButton,
+    );
+
+    const checkins = createElement("div", { className: "pill-row" });
+    checkins.append(
+      ...task.checkins.map((item) => createChip(`BE ${item.participantId}`)),
+    );
+
+    const uploads = createElement("div", { className: "pill-row" });
+    uploads.append(
+      ...task.uploads.map((item) => createChip(`IGC ${item.participantId}.igc`)),
+    );
+
+    card.append(header, tokenRow, actions, checkins, uploads);
+    return card;
   });
+
+  adminElements.tasksList.append(...cards);
 }
 
 async function loadTasks() {

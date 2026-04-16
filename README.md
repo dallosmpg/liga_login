@@ -88,6 +88,24 @@ Create `/srv/liga_login/.env` and set these at minimum:
 - `SECURE_COOKIES=true`
 - `TRUST_PROXY=true`
 
+When `NODE_ENV=production`, the app refuses to start unless
+`ADMIN_PASSWORD` is set in the real environment and is not the default
+`change-me`. It must be at least 12 characters long. PM2 loads the root
+`.env` because the app reads that file on startup, so keep the production
+password in `/srv/liga_login/.env` and restart PM2 after changing it.
+
+Optional rate-limit settings:
+
+- `ADMIN_LOGIN_RATE_LIMIT_MAX=10`
+- `ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS=900000`
+- `PUBLIC_WRITE_RATE_LIMIT_MAX=120`
+- `PUBLIC_WRITE_RATE_LIMIT_WINDOW_MS=60000`
+- `PUBLIC_UPLOAD_RATE_LIMIT_MAX=30`
+- `PUBLIC_UPLOAD_RATE_LIMIT_WINDOW_MS=900000`
+
+These defaults limit admin login attempts per IP, public check-in/delete
+requests per IP, and public upload attempts per IP plus task token.
+
 ### PM2
 
 Start the app from the deploy directory:
@@ -136,6 +154,10 @@ enabled in `/srv/liga_login/.env` when running behind Caddy:
 
 - `SECURE_COOKIES=true`
 - `TRUST_PROXY=true`
+
+The app sends CSP, frame protection, content sniffing, referrer, permissions,
+and HSTS headers itself. HSTS is only sent when `SECURE_COOKIES=true`, which is
+the expected production setting behind Caddy HTTPS.
 
 ## Testing
 

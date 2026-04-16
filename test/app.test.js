@@ -5,10 +5,14 @@ const os = require("os");
 const path = require("path");
 
 const {
+  assertProductionConfig,
   createConfig,
+  createRateLimiter,
   createStore,
   loadEnvFile,
   normalizeParticipantId,
+  requireAdminSameOrigin,
+  securityHeaders,
   validateIgcBuffer,
 } = require("../server");
 
@@ -110,4 +114,135 @@ test("loadEnvFile applies .env values without overriding real environment", () =
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+function createMockResponse() {
+  return {
+    headers: {},
+    statusCode: 200,
+    payload: null,
+    setHeader(name, value) {
+      this.headers[name.toLowerCase()] = value;
+    },
+    status(statusCode) {
+      this.statusCode = statusCode;
+      return this;
+    },
+    json(payload) {
+      this.payload = payload;
+      return this;
+    },
+  };
+}
+
+test("production config rejects missing or weak admin passwords", () => {
+  assert.throws(
+    () =>
+      assertProductionConfig(
+        { adminPassword: "change-me" },
+        { NODE_ENV: "production" },
+      ),
+    /ADMIN_PASSWORD/,
+  );
+
+  assert.throws(
+    () =>
+      assertProductionConfig(
+        { adminPassword: "short" },
+        { NODE_ENV: "production", ADMIN_PASSWORD: "short" },
+      ),
+    /ADMIN_PASSWORD/,
+  );
+
+  assert.doesNotThrow(() =>
+    assertProductionConfig(
+      { adminPassword: "long-random-password" },
+      { NODE_ENV: "production", ADMIN_PASSWORD: "long-random-password" },
+    ),
+  );
+});
+
+test("rate limiter returns 429 after the configured request budget", () => {
+  const limiter = createRateLimiter({
+    windowMs: 60_000,
+    max: 1,
+    keyGenerator: () => "test-key",
+  });
+  let nextCalls = 0;
+
+  const firstResponse = createMockResponse();
+  limiter({ method: "POST", path: "/api/admin/login" }, firstResponse, () => {
+    nextCalls += 1;
+  });
+  assert.equal(nextCalls, 1);
+  assert.equal(firstResponse.statusCode, 200);
+
+  const secondResponse = createMockResponse();
+  limiter({ method: "POST", path: "/api/admin/login" }, secondResponse, () => {
+    nextCalls += 1;
+  });
+  assert.equal(nextCalls, 1);
+  assert.equal(secondResponse.statusCode, 429);
+  assert.equal(secondResponse.headers["retry-after"], "60");
+});
+
+test("admin same-origin guard rejects cross-origin unsafe requests", () => {
+  const guard = requireAdminSameOrigin({
+    baseUrl: "https://liga.example.test",
+  });
+  const crossOriginResponse = createMockResponse();
+  let nextCalls = 0;
+
+  guard(
+    {
+      method: "POST",
+      get(name) {
+        return name.toLowerCase() === "origin"
+          ? "https://evil.example.test"
+          : undefined;
+      },
+    },
+    crossOriginResponse,
+    () => {
+      nextCalls += 1;
+    },
+  );
+
+  assert.equal(crossOriginResponse.statusCode, 403);
+  assert.equal(nextCalls, 0);
+
+  const sameOriginResponse = createMockResponse();
+  guard(
+    {
+      method: "POST",
+      get(name) {
+        return name.toLowerCase() === "origin"
+          ? "https://liga.example.test"
+          : undefined;
+      },
+    },
+    sameOriginResponse,
+    () => {
+      nextCalls += 1;
+    },
+  );
+
+  assert.equal(sameOriginResponse.statusCode, 200);
+  assert.equal(nextCalls, 1);
+});
+
+test("security headers include CSP and frame protection", () => {
+  const middleware = securityHeaders({ secureCookies: true });
+  const response = createMockResponse();
+  let nextCalled = false;
+
+  middleware({}, response, () => {
+    nextCalled = true;
+  });
+
+  assert.equal(nextCalled, true);
+  assert.match(response.headers["content-security-policy"], /default-src 'self'/);
+  assert.equal(response.headers["x-frame-options"], "DENY");
+  assert.equal(response.headers["x-content-type-options"], "nosniff");
+  assert.match(response.headers["strict-transport-security"], /max-age=31536000/);
 });

@@ -11,6 +11,11 @@ const execFileAsync = promisify(execFile);
 const ROOT_DIR = __dirname;
 const DEFAULT_ENV_FILE = path.join(ROOT_DIR, ".env");
 const DEFAULT_STATE = { tasks: [], checkins: [], uploads: [] };
+const DEFAULT_LIMITS = {
+  adminLogin: { windowMs: 15 * 60 * 1000, max: 10 },
+  publicWrite: { windowMs: 60 * 1000, max: 120 },
+  publicUpload: { windowMs: 15 * 60 * 1000, max: 30 },
+};
 
 function parseEnvValue(rawValue) {
   const value = String(rawValue ?? "").trim();
@@ -109,7 +114,56 @@ function createConfig(overrides = {}) {
       overrides.disableQrGeneration ?? process.env.DISABLE_QR_GENERATION,
       false,
     ),
+    rateLimits: {
+      adminLogin: {
+        windowMs: readPositiveNumber(
+          overrides.adminLoginRateLimitWindowMs ??
+            process.env.ADMIN_LOGIN_RATE_LIMIT_WINDOW_MS ??
+            DEFAULT_LIMITS.adminLogin.windowMs,
+          DEFAULT_LIMITS.adminLogin.windowMs,
+        ),
+        max: readPositiveNumber(
+          overrides.adminLoginRateLimitMax ??
+            process.env.ADMIN_LOGIN_RATE_LIMIT_MAX ??
+            DEFAULT_LIMITS.adminLogin.max,
+          DEFAULT_LIMITS.adminLogin.max,
+        ),
+      },
+      publicWrite: {
+        windowMs: readPositiveNumber(
+          overrides.publicWriteRateLimitWindowMs ??
+            process.env.PUBLIC_WRITE_RATE_LIMIT_WINDOW_MS ??
+            DEFAULT_LIMITS.publicWrite.windowMs,
+          DEFAULT_LIMITS.publicWrite.windowMs,
+        ),
+        max: readPositiveNumber(
+          overrides.publicWriteRateLimitMax ??
+            process.env.PUBLIC_WRITE_RATE_LIMIT_MAX ??
+            DEFAULT_LIMITS.publicWrite.max,
+          DEFAULT_LIMITS.publicWrite.max,
+        ),
+      },
+      publicUpload: {
+        windowMs: readPositiveNumber(
+          overrides.publicUploadRateLimitWindowMs ??
+            process.env.PUBLIC_UPLOAD_RATE_LIMIT_WINDOW_MS ??
+            DEFAULT_LIMITS.publicUpload.windowMs,
+          DEFAULT_LIMITS.publicUpload.windowMs,
+        ),
+        max: readPositiveNumber(
+          overrides.publicUploadRateLimitMax ??
+            process.env.PUBLIC_UPLOAD_RATE_LIMIT_MAX ??
+            DEFAULT_LIMITS.publicUpload.max,
+          DEFAULT_LIMITS.publicUpload.max,
+        ),
+      },
+    },
   };
+}
+
+function readPositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function toBoolean(value, fallback) {
@@ -245,6 +299,19 @@ function badRequest(message, status = 400) {
   return error;
 }
 
+function assertProductionConfig(config, env = process.env) {
+  if (env.NODE_ENV !== "production") {
+    return;
+  }
+
+  const password = String(config.adminPassword ?? "");
+  if (!env.ADMIN_PASSWORD || password === "change-me" || password.length < 12) {
+    throw new Error(
+      "ADMIN_PASSWORD must be set to a non-default value with at least 12 characters in production.",
+    );
+  }
+}
+
 function safeCompare(left, right) {
   const a = Buffer.from(String(left ?? ""));
   const b = Buffer.from(String(right ?? ""));
@@ -293,6 +360,110 @@ function serializeCookie(name, value, options = {}) {
   }
 
   return parts.join("; ");
+}
+
+function getRequestIp(req) {
+  return req.ip || req.socket?.remoteAddress || "unknown";
+}
+
+function createRateLimiter({ windowMs, max, keyGenerator } = {}) {
+  const buckets = new Map();
+  const limitWindowMs = Number(windowMs);
+  const maxRequests = Number(max);
+
+  return (req, res, next) => {
+    if (!Number.isFinite(limitWindowMs) || !Number.isFinite(maxRequests)) {
+      return next();
+    }
+
+    if (limitWindowMs <= 0 || maxRequests <= 0) {
+      return next();
+    }
+
+    const now = Date.now();
+    const key =
+      keyGenerator?.(req) ??
+      `${req.method}:${req.path}:${getRequestIp(req)}`;
+    const bucket = buckets.get(key);
+
+    if (!bucket || bucket.resetAt <= now) {
+      buckets.set(key, { count: 1, resetAt: now + limitWindowMs });
+      return next();
+    }
+
+    bucket.count += 1;
+    if (bucket.count <= maxRequests) {
+      return next();
+    }
+
+    const retryAfterSeconds = Math.ceil((bucket.resetAt - now) / 1000);
+    res.setHeader("Retry-After", String(Math.max(1, retryAfterSeconds)));
+    return res.status(429).json({
+      error: "Túl sok kérés. Kérlek próbáld újra később.",
+    });
+  };
+}
+
+function securityHeaders(config) {
+  return (_req, res, next) => {
+    res.setHeader("Content-Security-Policy", [
+      "default-src 'self'",
+      "base-uri 'none'",
+      "connect-src 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "img-src 'self' data:",
+      "object-src 'none'",
+      "script-src 'self'",
+      "style-src 'self'",
+    ].join("; "));
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader(
+      "Permissions-Policy",
+      "camera=(), geolocation=(), microphone=(), payment=()",
+    );
+
+    if (config.secureCookies) {
+      res.setHeader(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains",
+      );
+    }
+
+    next();
+  };
+}
+
+function sameOrigin(left, right) {
+  try {
+    return new URL(left).origin === new URL(right).origin;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function requireAdminSameOrigin(config) {
+  return (req, res, next) => {
+    if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
+      return next();
+    }
+
+    const origin = req.get("origin");
+    const referer = req.get("referer");
+
+    if (origin && !sameOrigin(origin, config.baseUrl)) {
+      return res.status(403).json({ error: "Érvénytelen admin kérés eredet." });
+    }
+
+    if (!origin && referer && !sameOrigin(referer, config.baseUrl)) {
+      return res.status(403).json({ error: "Érvénytelen admin kérés eredet." });
+    }
+
+    return next();
+  };
 }
 
 function createStore(config) {
@@ -597,9 +768,12 @@ function asyncRoute(handler) {
 
 function createApp(overrides = {}) {
   const config = createConfig(overrides);
+  assertProductionConfig(config);
   ensureAppLayout(config);
 
   const app = express();
+  app.disable("x-powered-by");
+
   const store = createStore(config);
   const adminSessions = new Map();
   const upload = multer({
@@ -611,8 +785,24 @@ function createApp(overrides = {}) {
     app.set("trust proxy", 1);
   }
 
+  const adminLoginLimiter = createRateLimiter({
+    ...config.rateLimits.adminLogin,
+    keyGenerator: (req) => `admin-login:${getRequestIp(req)}`,
+  });
+  const publicWriteLimiter = createRateLimiter({
+    ...config.rateLimits.publicWrite,
+    keyGenerator: (req) => `public-write:${getRequestIp(req)}`,
+  });
+  const publicUploadLimiter = createRateLimiter({
+    ...config.rateLimits.publicUpload,
+    keyGenerator: (req) =>
+      `public-upload:${getRequestIp(req)}:${req.params.token ?? ""}`,
+  });
+
+  app.use(securityHeaders(config));
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
+  app.use("/api/admin", requireAdminSameOrigin(config));
 
   function getAdminSession(req) {
     const token = parseCookies(req.headers.cookie).admin_session;
@@ -677,6 +867,7 @@ function createApp(overrides = {}) {
 
   app.post(
     "/api/public/tasks/:token/checkin",
+    publicWriteLimiter,
     asyncRoute(async (req, res) => {
       const task = store.findTaskByToken(req.params.token);
       if (!task) {
@@ -695,6 +886,7 @@ function createApp(overrides = {}) {
 
   app.post(
     "/api/public/tasks/:token/upload",
+    publicUploadLimiter,
     upload.single("igc"),
     asyncRoute(async (req, res) => {
       const task = store.findTaskByToken(req.params.token);
@@ -733,6 +925,7 @@ function createApp(overrides = {}) {
 
   app.delete(
     "/api/public/tasks/:token/upload",
+    publicWriteLimiter,
     asyncRoute(async (req, res) => {
       const task = store.findTaskByToken(req.params.token);
       if (!task) {
@@ -762,6 +955,7 @@ function createApp(overrides = {}) {
 
   app.post(
     "/api/admin/login",
+    adminLoginLimiter,
     asyncRoute(async (req, res) => {
       const { username, password } = req.body ?? {};
 
@@ -905,10 +1099,14 @@ if (require.main === module) {
 }
 
 module.exports = {
+  assertProductionConfig,
   createApp,
   createConfig,
+  createRateLimiter,
   createStore,
   loadEnvFile,
   normalizeParticipantId,
+  requireAdminSameOrigin,
+  securityHeaders,
   validateIgcBuffer,
 };

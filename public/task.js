@@ -42,6 +42,13 @@ function setFlash(message, kind = "") {
   elements.flash.className = `flash ${kind}`.trim();
 }
 
+function createStatusPill(item) {
+  const pill = document.createElement("div");
+  pill.className = `status-pill ${item.kind}`;
+  pill.textContent = item.label;
+  return pill;
+}
+
 function readConfirmedParticipantId() {
   const firstValue = elements.participantInput.value.trim().toUpperCase();
   const secondValue = elements.participantConfirmInput.value.trim().toUpperCase();
@@ -86,12 +93,7 @@ function renderStatus() {
     },
   ];
 
-  elements.statusCards.innerHTML = items
-    .map(
-      (item) =>
-        `<div class="status-pill ${item.kind}">${item.label}</div>`,
-    )
-    .join("");
+  elements.statusCards.replaceChildren(...items.map(createStatusPill));
 
   const canAct = Boolean(participantId);
   elements.checkinButton.disabled = !canAct || currentState.checkedIn;
