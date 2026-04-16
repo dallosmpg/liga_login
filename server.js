@@ -18,6 +18,10 @@ const DEFAULT_LIMITS = {
   publicWrite: { windowMs: 60 * 1000, max: 120 },
   publicUpload: { windowMs: 15 * 60 * 1000, max: 30 },
 };
+const DISABLED_QR_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+  "base64",
+);
 
 function parseEnvValue(rawValue) {
   const value = String(rawValue ?? "").trim();
@@ -442,7 +446,7 @@ function taskLogsDirectory(config, taskId) {
 }
 
 function taskQrPath(config, taskId) {
-  return path.join(taskDirectory(config, taskId), "qr", "task.svg");
+  return path.join(taskDirectory(config, taskId), "qr", "task.png");
 }
 
 function taskQrMetadataPath(config, taskId) {
@@ -479,7 +483,7 @@ function taskArchiveName(task) {
 }
 
 function taskQrDownloadName(task) {
-  return `${task.taskDate}-${slugify(task.name)}-qr.svg`;
+  return `${task.taskDate}-${slugify(task.name)}-qr.png`;
 }
 
 function taskCheckinsDownloadName(task) {
@@ -924,7 +928,19 @@ function createStore(config) {
       return task;
     },
 
+    updateTask(taskId, updates) {
+      const task = findTaskById(taskId);
+      if (!task) {
+        return null;
+      }
+
+      Object.assign(task, updates, { updatedAt: new Date().toISOString() });
+      persist();
+      return task;
+    },
+
     deleteTask(taskId) {
+      const existing = findTaskById(taskId);
       state = {
         ...state,
         tasks: state.tasks.filter((task) => task.id !== taskId),
@@ -932,6 +948,7 @@ function createStore(config) {
         uploads: state.uploads.filter((item) => item.taskId !== taskId),
       };
       persist();
+      return existing;
     },
   };
 }
@@ -1110,18 +1127,16 @@ async function generateTaskQr(task, config) {
   ensureDir(path.dirname(outputPath));
 
   if (config.disableQrGeneration) {
-    const placeholder = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 180"><rect width="420" height="180" fill="#f7f1e8"/><text x="24" y="48" fill="#202328" font-family="sans-serif" font-size="18">QR generation disabled</text><text x="24" y="92" fill="#202328" font-family="monospace" font-size="13">${qrPublicUrl}</text></svg>`;
-    await fsp.writeFile(outputPath, placeholder, "utf8");
+    await fsp.writeFile(outputPath, DISABLED_QR_PNG);
     await fsp.writeFile(metadataPath, `${qrPublicUrl}\n`, "utf8");
     return outputPath;
   }
 
   await execFileAsync(config.qrBinary, [
     "-t",
-    "SVG",
-    "--margin=1",
-    "--foreground=1B1E20",
-    "--background=F8F1E7",
+    "PNG",
+    "--size=20",
+    "--margin=4",
     "-o",
     outputPath,
     qrPublicUrl,
@@ -1437,6 +1452,45 @@ function createApp(overrides = {}) {
       }
 
       res.status(201).json(serializeAdminTask(task, store, config));
+    }),
+  );
+
+  app.put(
+    "/api/admin/tasks/:taskId",
+    requireAdmin,
+    asyncRoute(async (req, res) => {
+      const name = normalizeTaskName(req.body.name);
+      const taskDate = normalizeTaskDate(req.body.taskDate);
+      const checkinOptions = normalizeTaskCheckinOptions(req.body);
+      const task = store.updateTask(req.params.taskId, {
+        name,
+        taskDate,
+        ...checkinOptions,
+      });
+
+      if (!task) {
+        throw badRequest("A feladat nem található.", 404);
+      }
+
+      res.json(serializeAdminTask(task, store, config));
+    }),
+  );
+
+  app.delete(
+    "/api/admin/tasks/:taskId",
+    requireAdmin,
+    asyncRoute(async (req, res) => {
+      const task = store.deleteTask(req.params.taskId);
+      if (!task) {
+        throw badRequest("A feladat nem található.", 404);
+      }
+
+      await fsp.rm(taskDirectory(config, task.id), {
+        force: true,
+        recursive: true,
+      });
+
+      res.json({ ok: true });
     }),
   );
 

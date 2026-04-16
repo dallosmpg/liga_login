@@ -64,7 +64,7 @@ Change the admin password before deploying anywhere public.
 
 - metadata: `data/state.json`
 - task logs: `storage/tasks/<task-id>/logs/<participant_id>.igc`
-- task QR: `storage/tasks/<task-id>/qr/task.svg`
+- task QR: `storage/tasks/<task-id>/qr/task.png`
 - temporary ZIP exports: `storage/exports`
 
 ## Check-in Modes
