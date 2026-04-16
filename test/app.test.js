@@ -16,6 +16,7 @@ const {
   normalizeParticipantId,
   requireAdminSameOrigin,
   securityHeaders,
+  shouldGenerateTaskQr,
   validateIgcBuffer,
   verifyPassword,
 } = require("../server");
@@ -153,6 +154,35 @@ test("buildCheckinsCsv exports checked-in pilots with upload status", () => {
       "",
     ].join("\n"),
   );
+});
+
+test("shouldGenerateTaskQr detects missing and stale QR URL metadata", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "liga-login-qr-"));
+  const task = { id: "task-1", publicToken: "token-1" };
+  const config = createConfig({
+    dataDir: path.join(tempRoot, "data"),
+    storageDir: path.join(tempRoot, "storage"),
+    baseUrl: "https://task.xcliga.xyz",
+  });
+  const qrDir = path.join(config.storageDir, "tasks", task.id, "qr");
+  const qrPath = path.join(qrDir, "task.svg");
+  const metadataPath = path.join(qrDir, "task.url");
+
+  try {
+    assert.equal(shouldGenerateTaskQr(task, config), true);
+
+    fs.mkdirSync(qrDir, { recursive: true });
+    fs.writeFileSync(qrPath, "<svg></svg>");
+    assert.equal(shouldGenerateTaskQr(task, config), true);
+
+    fs.writeFileSync(metadataPath, "http://localhost:3000/task/token-1\n");
+    assert.equal(shouldGenerateTaskQr(task, config), true);
+
+    fs.writeFileSync(metadataPath, "https://task.xcliga.xyz/task/token-1\n");
+    assert.equal(shouldGenerateTaskQr(task, config), false);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 function createMockResponse() {

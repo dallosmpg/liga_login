@@ -277,6 +277,10 @@ function taskQrPath(config, taskId) {
   return path.join(taskDirectory(config, taskId), "qr", "task.svg");
 }
 
+function taskQrMetadataPath(config, taskId) {
+  return path.join(taskDirectory(config, taskId), "qr", "task.url");
+}
+
 function taskPublicUrl(config, task) {
   return `${config.baseUrl}/task/${task.publicToken}`;
 }
@@ -887,11 +891,14 @@ function buildCheckinsCsv(task, store) {
 
 async function generateTaskQr(task, config) {
   const outputPath = taskQrPath(config, task.id);
+  const metadataPath = taskQrMetadataPath(config, task.id);
+  const publicUrl = taskPublicUrl(config, task);
   ensureDir(path.dirname(outputPath));
 
   if (config.disableQrGeneration) {
-    const placeholder = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 180"><rect width="420" height="180" fill="#f7f1e8"/><text x="24" y="48" fill="#202328" font-family="sans-serif" font-size="18">QR generation disabled</text><text x="24" y="92" fill="#202328" font-family="monospace" font-size="13">${taskPublicUrl(config, task)}</text></svg>`;
+    const placeholder = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 180"><rect width="420" height="180" fill="#f7f1e8"/><text x="24" y="48" fill="#202328" font-family="sans-serif" font-size="18">QR generation disabled</text><text x="24" y="92" fill="#202328" font-family="monospace" font-size="13">${publicUrl}</text></svg>`;
     await fsp.writeFile(outputPath, placeholder, "utf8");
+    await fsp.writeFile(metadataPath, `${publicUrl}\n`, "utf8");
     return outputPath;
   }
 
@@ -903,10 +910,22 @@ async function generateTaskQr(task, config) {
     "--background=F8F1E7",
     "-o",
     outputPath,
-    taskPublicUrl(config, task),
+    publicUrl,
   ]);
+  await fsp.writeFile(metadataPath, `${publicUrl}\n`, "utf8");
 
   return outputPath;
+}
+
+function shouldGenerateTaskQr(task, config) {
+  const qrPath = taskQrPath(config, task.id);
+  const metadataPath = taskQrMetadataPath(config, task.id);
+
+  if (!fs.existsSync(qrPath) || !fs.existsSync(metadataPath)) {
+    return true;
+  }
+
+  return fs.readFileSync(metadataPath, "utf8").trim() !== taskPublicUrl(config, task);
 }
 
 async function buildZipArchive(task, store, config) {
@@ -1208,7 +1227,7 @@ function createApp(overrides = {}) {
       }
 
       const qrPath = taskQrPath(config, task.id);
-      if (!fs.existsSync(qrPath)) {
+      if (shouldGenerateTaskQr(task, config)) {
         await generateTaskQr(task, config);
       }
 
@@ -1295,6 +1314,7 @@ module.exports = {
   normalizeParticipantId,
   requireAdminSameOrigin,
   securityHeaders,
+  shouldGenerateTaskQr,
   validateIgcBuffer,
   verifyPassword,
 };
