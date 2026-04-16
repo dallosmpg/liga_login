@@ -9,7 +9,70 @@ const { promisify } = require("util");
 
 const execFileAsync = promisify(execFile);
 const ROOT_DIR = __dirname;
+const DEFAULT_ENV_FILE = path.join(ROOT_DIR, ".env");
 const DEFAULT_STATE = { tasks: [], checkins: [], uploads: [] };
+
+function parseEnvValue(rawValue) {
+  const value = String(rawValue ?? "").trim();
+  const quote = value[0];
+
+  if (quote === "\"" || quote === "'") {
+    let endIndex = value.length;
+
+    for (let index = 1; index < value.length; index += 1) {
+      if (value[index] === quote && value[index - 1] !== "\\") {
+        endIndex = index;
+        break;
+      }
+    }
+
+    const quoted = value.slice(1, endIndex);
+    if (quote === "'") {
+      return quoted;
+    }
+
+    return quoted
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, "\"")
+      .replace(/\\\\/g, "\\");
+  }
+
+  return value.replace(/\s+#.*$/, "").trim();
+}
+
+function loadEnvFile(filePath = DEFAULT_ENV_FILE, targetEnv = process.env) {
+  if (!fs.existsSync(filePath)) {
+    return false;
+  }
+
+  const content = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
+  const lines = content.split(/\r?\n/);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(
+      trimmed,
+    );
+    if (!match) {
+      continue;
+    }
+
+    const [, key, rawValue] = match;
+    if (targetEnv[key] == null) {
+      targetEnv[key] = parseEnvValue(rawValue);
+    }
+  }
+
+  return true;
+}
+
+loadEnvFile();
 
 function createConfig(overrides = {}) {
   const port = Number(overrides.port ?? process.env.PORT ?? 3000);
@@ -845,6 +908,7 @@ module.exports = {
   createApp,
   createConfig,
   createStore,
+  loadEnvFile,
   normalizeParticipantId,
   validateIgcBuffer,
 };

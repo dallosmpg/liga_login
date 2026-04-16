@@ -4,7 +4,13 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { createConfig, createStore, normalizeParticipantId, validateIgcBuffer } = require("../server");
+const {
+  createConfig,
+  createStore,
+  loadEnvFile,
+  normalizeParticipantId,
+  validateIgcBuffer,
+} = require("../server");
 
 function buildIgc() {
   return [
@@ -55,7 +61,7 @@ test("store supports task creation, check-in, duplicate protection, delete, and 
 
     assert.throws(
       () => store.saveUpload(task.id, participantId, "replacement.igc", stats),
-      /Delete it first/,
+      /előbb töröld/,
     );
 
     const removed = store.deleteUpload(task.id, participantId);
@@ -68,6 +74,39 @@ test("store supports task creation, check-in, duplicate protection, delete, and 
       stats,
     );
     assert.equal(secondUpload.originalName, "replacement.igc");
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("loadEnvFile applies .env values without overriding real environment", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "liga-login-env-"));
+  const envPath = path.join(tempRoot, ".env");
+  const targetEnv = {
+    ADMIN_PASSWORD: "from-real-env",
+  };
+
+  fs.writeFileSync(
+    envPath,
+    [
+      "PORT=4321",
+      "BASE_URL=https://liga.example.test",
+      "ADMIN_USERNAME=liga-admin",
+      "ADMIN_PASSWORD=from-dot-env",
+      "TRUST_PROXY=true # inline comment",
+      "SECURE_COOKIES=\"true\"",
+      "IGNORED_LINE",
+    ].join("\n"),
+  );
+
+  try {
+    assert.equal(loadEnvFile(envPath, targetEnv), true);
+    assert.equal(targetEnv.PORT, "4321");
+    assert.equal(targetEnv.BASE_URL, "https://liga.example.test");
+    assert.equal(targetEnv.ADMIN_USERNAME, "liga-admin");
+    assert.equal(targetEnv.ADMIN_PASSWORD, "from-real-env");
+    assert.equal(targetEnv.TRUST_PROXY, "true");
+    assert.equal(targetEnv.SECURE_COOKIES, "true");
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
