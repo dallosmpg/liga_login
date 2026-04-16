@@ -11,13 +11,18 @@ const {
   createPasswordHash,
   createRateLimiter,
   createStore,
+  distanceMetersBetween,
   isValidPasswordHash,
   loadEnvFile,
   normalizeParticipantId,
+  normalizeTaskCheckinOptions,
   requireAdminSameOrigin,
   securityHeaders,
   shouldGenerateTaskQr,
+  taskQrPublicUrl,
+  validateCheckinAccess,
   validateIgcBuffer,
+  validateCheckinLocation,
   verifyPassword,
 } = require("../server");
 
@@ -52,6 +57,8 @@ test("store supports task creation, check-in, duplicate protection, delete, and 
   try {
     const participantId = normalizeParticipantId("117");
     const task = store.createTask("Task 1", "2026-04-11");
+    assert.equal(typeof task.qrCheckinToken, "string");
+    assert.equal(task.qrCheckinToken.length > 20, true);
 
     const firstCheckin = store.createCheckin(task.id, participantId);
     assert.equal(firstCheckin.created, true);
@@ -148,12 +155,117 @@ test("buildCheckinsCsv exports checked-in pilots with upload status", () => {
   assert.equal(
     buildCheckinsCsv(task, store),
     [
-      "participant_id,checked_in_at,uploaded,uploaded_at,original_name,flight_date,fix_count",
-      "117,2026-04-16T10:00:00.000Z,yes,2026-04-16T14:00:00.000Z,\"flight, final.igc\",2026-04-16,42",
-      "118,2026-04-16T10:05:00.000Z,no,,,,",
+      "participant_id,checked_in_at,checkin_method,gps_distance_meters,gps_accuracy_meters,uploaded,uploaded_at,original_name,flight_date,fix_count",
+      "117,2026-04-16T10:00:00.000Z,open,,,yes,2026-04-16T14:00:00.000Z,\"flight, final.igc\",2026-04-16,42",
+      "118,2026-04-16T10:05:00.000Z,open,,,no,,,,",
       "",
     ].join("\n"),
   );
+});
+
+test("GPS check-in validation accepts nearby accurate locations only", () => {
+  const task = {
+    checkinValidation: "gps",
+    checkinLatitude: 47.497913,
+    checkinLongitude: 19.040236,
+    checkinRadiusMeters: 150,
+  };
+
+  const accepted = validateCheckinLocation(task, {
+    latitude: 47.498,
+    longitude: 19.0402,
+    accuracyMeters: 20,
+  });
+  assert.equal(accepted.method, "gps");
+  assert.equal(accepted.gpsAccuracyMeters, 20);
+  assert.equal(accepted.gpsDistanceMeters < 150, true);
+
+  assert.throws(
+    () =>
+      validateCheckinLocation(task, {
+        latitude: 47.51,
+        longitude: 19.0402,
+        accuracyMeters: 20,
+      }),
+    /megengedett sugár/,
+  );
+
+  assert.throws(
+    () =>
+      validateCheckinLocation(task, {
+        latitude: 47.498,
+        longitude: 19.0402,
+        accuracyMeters: 500,
+      }),
+    /pontosság/,
+  );
+});
+
+test("QR proof bypasses GPS validation for GPS-enabled tasks", () => {
+  const task = {
+    checkinValidation: "gps",
+    checkinLatitude: 47.497913,
+    checkinLongitude: 19.040236,
+    checkinRadiusMeters: 150,
+    qrCheckinToken: "qr-secret",
+    publicToken: "public-token",
+  };
+
+  assert.deepEqual(
+    validateCheckinAccess(task, { qrCheckinToken: "qr-secret" }),
+    { method: "qr" },
+  );
+
+  assert.throws(
+    () => validateCheckinAccess(task, { qrCheckinToken: "wrong" }),
+    /GPS szélesség/,
+  );
+});
+
+test("task QR public URL includes QR check-in proof token", () => {
+  const config = createConfig({ baseUrl: "https://task.xcliga.xyz" });
+  const task = {
+    publicToken: "public-token",
+    qrCheckinToken: "qr token",
+  };
+
+  assert.equal(
+    taskQrPublicUrl(config, task),
+    "https://task.xcliga.xyz/task/public-token?qr=qr%20token",
+  );
+});
+
+test("task check-in options normalize open and GPS configuration", () => {
+  assert.deepEqual(normalizeTaskCheckinOptions({ checkinValidation: "open" }), {
+    checkinValidation: "open",
+    checkinLatitude: null,
+    checkinLongitude: null,
+    checkinRadiusMeters: null,
+  });
+
+  assert.deepEqual(
+    normalizeTaskCheckinOptions({
+      checkinValidation: "gps",
+      checkinLatitude: "47.497913",
+      checkinLongitude: "19.040236",
+      checkinRadiusMeters: "150",
+    }),
+    {
+      checkinValidation: "gps",
+      checkinLatitude: 47.497913,
+      checkinLongitude: 19.040236,
+      checkinRadiusMeters: 150,
+    },
+  );
+});
+
+test("distanceMetersBetween calculates realistic meter distances", () => {
+  const distance = distanceMetersBetween(
+    { latitude: 47.497913, longitude: 19.040236 },
+    { latitude: 47.498913, longitude: 19.040236 },
+  );
+  assert.equal(distance > 110, true);
+  assert.equal(distance < 112, true);
 });
 
 test("shouldGenerateTaskQr detects missing and stale QR URL metadata", () => {
@@ -329,5 +441,6 @@ test("security headers include CSP and frame protection", () => {
   assert.match(response.headers["content-security-policy"], /default-src 'self'/);
   assert.equal(response.headers["x-frame-options"], "DENY");
   assert.equal(response.headers["x-content-type-options"], "nosniff");
+  assert.match(response.headers["permissions-policy"], /geolocation=\(self\)/);
   assert.match(response.headers["strict-transport-security"], /max-age=31536000/);
 });
