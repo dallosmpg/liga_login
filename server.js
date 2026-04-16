@@ -8,9 +8,11 @@ const { execFile } = require("child_process");
 const { promisify } = require("util");
 
 const execFileAsync = promisify(execFile);
+const scryptAsync = promisify(crypto.scrypt);
 const ROOT_DIR = __dirname;
 const DEFAULT_ENV_FILE = path.join(ROOT_DIR, ".env");
 const DEFAULT_STATE = { tasks: [], checkins: [], uploads: [] };
+const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1, keyLength: 64 };
 const DEFAULT_LIMITS = {
   adminLogin: { windowMs: 15 * 60 * 1000, max: 10 },
   publicWrite: { windowMs: 60 * 1000, max: 120 },
@@ -97,6 +99,8 @@ function createConfig(overrides = {}) {
     exportsDir: path.join(storageDir, "exports"),
     publicDir: path.join(ROOT_DIR, "public"),
     adminUsername: overrides.adminUsername ?? process.env.ADMIN_USERNAME ?? "admin",
+    adminPasswordHash:
+      overrides.adminPasswordHash ?? process.env.ADMIN_PASSWORD_HASH ?? "",
     adminPassword:
       overrides.adminPassword ?? process.env.ADMIN_PASSWORD ?? "change-me",
     maxUploadBytes:
@@ -304,12 +308,129 @@ function assertProductionConfig(config, env = process.env) {
     return;
   }
 
-  const password = String(config.adminPassword ?? "");
-  if (!env.ADMIN_PASSWORD || password === "change-me" || password.length < 12) {
+  if (!isValidPasswordHash(config.adminPasswordHash)) {
     throw new Error(
-      "ADMIN_PASSWORD must be set to a non-default value with at least 12 characters in production.",
+      "ADMIN_PASSWORD_HASH must be set to a valid scrypt hash in production.",
     );
   }
+}
+
+function scryptMaxmem(params) {
+  return Math.max(32 * 1024 * 1024, 128 * params.N * params.r + 1024 * 1024);
+}
+
+async function derivePasswordKey(password, salt, params) {
+  return scryptAsync(String(password ?? ""), salt, params.keyLength, {
+    N: params.N,
+    r: params.r,
+    p: params.p,
+    maxmem: scryptMaxmem(params),
+  });
+}
+
+function parsePositiveInteger(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function areScryptParamsSafe(params) {
+  return (
+    Number.isInteger(Math.log2(params.N)) &&
+    params.N >= 1024 &&
+    params.N <= 1048576 &&
+    params.r >= 1 &&
+    params.r <= 64 &&
+    params.p >= 1 &&
+    params.p <= 16 &&
+    params.keyLength >= 32 &&
+    params.keyLength <= 128
+  );
+}
+
+function parsePasswordHash(passwordHash) {
+  const parts = String(passwordHash ?? "").split("$");
+  if (parts.length !== 7 || parts[0] !== "scrypt") {
+    return null;
+  }
+
+  const params = {
+    N: parsePositiveInteger(parts[1]),
+    r: parsePositiveInteger(parts[2]),
+    p: parsePositiveInteger(parts[3]),
+    keyLength: parsePositiveInteger(parts[4]),
+  };
+
+  if (!params.N || !params.r || !params.p || !params.keyLength) {
+    return null;
+  }
+
+  if (!areScryptParamsSafe(params)) {
+    return null;
+  }
+
+  try {
+    const salt = Buffer.from(parts[5], "base64url");
+    const hash = Buffer.from(parts[6], "base64url");
+    if (salt.length < 16 || hash.length !== params.keyLength) {
+      return null;
+    }
+
+    return { params, salt, hash };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function isValidPasswordHash(passwordHash) {
+  return Boolean(parsePasswordHash(passwordHash));
+}
+
+async function createPasswordHash(password, options = {}) {
+  const params = {
+    N: options.N ?? SCRYPT_PARAMS.N,
+    r: options.r ?? SCRYPT_PARAMS.r,
+    p: options.p ?? SCRYPT_PARAMS.p,
+    keyLength: options.keyLength ?? SCRYPT_PARAMS.keyLength,
+  };
+  const salt = options.salt ?? crypto.randomBytes(16);
+  const hash = await derivePasswordKey(password, salt, params);
+
+  return [
+    "scrypt",
+    params.N,
+    params.r,
+    params.p,
+    params.keyLength,
+    Buffer.from(salt).toString("base64url"),
+    Buffer.from(hash).toString("base64url"),
+  ].join("$");
+}
+
+async function verifyPassword(password, passwordHash) {
+  const parsed = parsePasswordHash(passwordHash);
+  if (!parsed) {
+    return false;
+  }
+
+  let candidate;
+  try {
+    candidate = await derivePasswordKey(password, parsed.salt, parsed.params);
+  } catch (_error) {
+    return false;
+  }
+  if (candidate.length !== parsed.hash.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(candidate, parsed.hash);
+}
+
+async function verifyAdminPassword(password, config) {
+  if (config.adminPasswordHash) {
+    return verifyPassword(password, config.adminPasswordHash);
+  }
+
+  return safeCompare(password, config.adminPassword);
 }
 
 function safeCompare(left, right) {
@@ -958,11 +1079,10 @@ function createApp(overrides = {}) {
     adminLoginLimiter,
     asyncRoute(async (req, res) => {
       const { username, password } = req.body ?? {};
+      const usernameMatches = safeCompare(username, config.adminUsername);
+      const passwordMatches = await verifyAdminPassword(password, config);
 
-      if (
-        !safeCompare(username, config.adminUsername) ||
-        !safeCompare(password, config.adminPassword)
-      ) {
+      if (!usernameMatches || !passwordMatches) {
         throw badRequest("Érvénytelen admin belépési adatok.", 401);
       }
 
@@ -1102,11 +1222,14 @@ module.exports = {
   assertProductionConfig,
   createApp,
   createConfig,
+  createPasswordHash,
   createRateLimiter,
   createStore,
+  isValidPasswordHash,
   loadEnvFile,
   normalizeParticipantId,
   requireAdminSameOrigin,
   securityHeaders,
   validateIgcBuffer,
+  verifyPassword,
 };

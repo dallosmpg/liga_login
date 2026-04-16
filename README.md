@@ -84,15 +84,30 @@ Create `/srv/liga_login/.env` and set these at minimum:
 - `PORT=3000`
 - `BASE_URL=https://your-domain.example`
 - `ADMIN_USERNAME=admin`
-- `ADMIN_PASSWORD=use-a-real-password`
+- `ADMIN_PASSWORD_HASH=scrypt$...`
 - `SECURE_COOKIES=true`
 - `TRUST_PROXY=true`
 
+Generate the admin password hash on the server:
+
+```bash
+cd /srv/liga_login
+npm run hash-password
+```
+
+Enter the password when prompted. The script prints a line like:
+
+```bash
+ADMIN_PASSWORD_HASH=scrypt$16384$8$1$64$...
+```
+
+Put that full line in `/srv/liga_login/.env`. Do not put `ADMIN_PASSWORD` in
+the production `.env`.
+
 When `NODE_ENV=production`, the app refuses to start unless
-`ADMIN_PASSWORD` is set in the real environment and is not the default
-`change-me`. It must be at least 12 characters long. PM2 loads the root
-`.env` because the app reads that file on startup, so keep the production
-password in `/srv/liga_login/.env` and restart PM2 after changing it.
+`ADMIN_PASSWORD_HASH` is a valid scrypt hash. The plain `ADMIN_PASSWORD`
+fallback exists only for local development. PM2 loads the root `.env` because
+the app reads that file on startup, so restart PM2 after changing the hash.
 
 Optional rate-limit settings:
 

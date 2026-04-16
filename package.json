@@ -5,6 +5,7 @@
   "scripts": {
     "test": "node --test",
     "dev": "node server.js",
+    "hash-password": "node scripts/hash-admin-password.js",
     "start": "node server.js"
   },
   "keywords": [],

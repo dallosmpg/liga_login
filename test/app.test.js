@@ -7,13 +7,16 @@ const path = require("path");
 const {
   assertProductionConfig,
   createConfig,
+  createPasswordHash,
   createRateLimiter,
   createStore,
+  isValidPasswordHash,
   loadEnvFile,
   normalizeParticipantId,
   requireAdminSameOrigin,
   securityHeaders,
   validateIgcBuffer,
+  verifyPassword,
 } = require("../server");
 
 function buildIgc() {
@@ -135,29 +138,45 @@ function createMockResponse() {
   };
 }
 
-test("production config rejects missing or weak admin passwords", () => {
+test("scrypt admin password hashes verify only matching passwords", async () => {
+  const passwordHash = await createPasswordHash("correct horse battery", {
+    salt: Buffer.alloc(16, 1),
+  });
+
+  assert.match(passwordHash, /^scrypt\$/);
+  assert.equal(isValidPasswordHash(passwordHash), true);
+  assert.equal(await verifyPassword("correct horse battery", passwordHash), true);
+  assert.equal(await verifyPassword("wrong horse battery", passwordHash), false);
+  assert.equal(await verifyPassword("correct horse battery", "not-a-hash"), false);
+});
+
+test("production config requires a valid admin password hash", async () => {
+  const passwordHash = await createPasswordHash("long-random-password", {
+    salt: Buffer.alloc(16, 2),
+  });
+
   assert.throws(
     () =>
       assertProductionConfig(
-        { adminPassword: "change-me" },
+        { adminPassword: "long-random-password", adminPasswordHash: "" },
         { NODE_ENV: "production" },
       ),
-    /ADMIN_PASSWORD/,
+    /ADMIN_PASSWORD_HASH/,
   );
 
   assert.throws(
     () =>
       assertProductionConfig(
-        { adminPassword: "short" },
-        { NODE_ENV: "production", ADMIN_PASSWORD: "short" },
+        { adminPasswordHash: "not-a-hash" },
+        { NODE_ENV: "production" },
       ),
-    /ADMIN_PASSWORD/,
+    /ADMIN_PASSWORD_HASH/,
   );
 
   assert.doesNotThrow(() =>
     assertProductionConfig(
-      { adminPassword: "long-random-password" },
-      { NODE_ENV: "production", ADMIN_PASSWORD: "long-random-password" },
+      { adminPasswordHash: passwordHash },
+      { NODE_ENV: "production" },
     ),
   );
 });
