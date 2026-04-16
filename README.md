@@ -1,4 +1,4 @@
-# Liga Login
+# Liga Login - Vibecode alert
 
 Simple Node/Express web app for a paragliding XC league:
 
