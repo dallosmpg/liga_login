@@ -4,7 +4,8 @@ Simple Node/Express web app for a paragliding XC league:
 
 - Pilots scan a task QR code.
 - They enter only their participant number.
-- They check in for that task.
+- They check in for that task; admins can allow QR-code check-in while requiring
+  GPS presence within a configured radius for non-QR check-ins.
 - They upload one validated `.igc` file for that task.
 - They can delete that upload and replace it if needed.
 - Admins create tasks, download QR codes, export checked-in pilots as `.csv`,
@@ -65,6 +66,25 @@ Change the admin password before deploying anywhere public.
 - task logs: `storage/tasks/<task-id>/logs/<participant_id>.igc`
 - task QR: `storage/tasks/<task-id>/qr/task.svg`
 - temporary ZIP exports: `storage/exports`
+
+## Check-in Modes
+
+When creating a task, admins can choose one of two check-in modes:
+
+- `QR/link alapján, helyellenőrzés nélkül`: any pilot who opens the task link can
+  check in without GPS.
+- `QR-kód vagy GPS hely alapján`: the task QR code contains a private check-in
+  proof token, so pilots who scan that QR can check in without GPS. Pilots who
+  open the task without that QR token must pass the configured GPS radius check.
+
+The normal public task URL does not include the QR proof token. Only the
+downloaded QR code URL includes it. Because the token is embedded in the QR URL,
+anyone who receives that full QR URL can also use the QR path, so treat printed
+QR codes and screenshots as check-in access.
+
+After deploying this feature, re-download and reprint QR codes for GPS-enabled
+tasks. Old QR codes that only contain `/task/<token>` do not contain the QR
+proof token and will require GPS like any other non-QR link.
 
 ## VPS Notes
 

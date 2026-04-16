@@ -1,5 +1,6 @@
 const participantStorageKey = "liga.participantId";
 const token = window.location.pathname.split("/").filter(Boolean).pop();
+const qrCheckinToken = new URLSearchParams(window.location.search).get("qr") || "";
 
 const elements = {
   title: document.getElementById("task-title"),
@@ -64,6 +65,87 @@ function readConfirmedParticipantId() {
   return firstValue;
 }
 
+function gpsRequired() {
+  return (
+    currentState?.task?.checkinValidation === "gps" &&
+    !currentState?.checkedIn &&
+    !qrCheckinToken
+  );
+}
+
+function getCurrentLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Ez a böngésző nem támogatja a GPS helymeghatározást."));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracyMeters: position.coords.accuracy,
+        });
+      },
+      () => {
+        reject(
+          new Error(
+            "A GPS helymeghatározás nem sikerült. Engedélyezd a helyadatokat, majd próbáld újra.",
+          ),
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      },
+    );
+  });
+}
+
+function checkinModeLabel() {
+  if (currentState.checkedIn) {
+    if (currentState.checkinMethod === "gps") {
+      const distance = currentState.gpsDistanceMeters ?? "?";
+      const accuracy = currentState.gpsAccuracyMeters ?? "?";
+      return `Bejelentkezés: GPS ellenőrizve (${distance} m, pontosság ${accuracy} m)`;
+    }
+
+    if (currentState.checkinMethod === "qr") {
+      return "Bejelentkezés: QR-kóddal, GPS nélkül";
+    }
+
+    return "Bejelentkezés: rögzítve";
+  }
+
+  if (currentState.task.checkinValidation === "gps" && qrCheckinToken) {
+    return "Bejelentkezés: QR-kód alapján, GPS nélkül";
+  }
+
+  if (currentState.task.checkinValidation === "gps") {
+    return "Bejelentkezés: GPS helyellenőrzés szükséges";
+  }
+
+  return "Bejelentkezés: QR/link alapján";
+}
+
+function checkinButtonLabel() {
+  if (currentState.checkedIn) {
+    return "Már bejelentkezve";
+  }
+
+  if (currentState.task.checkinValidation === "gps" && qrCheckinToken) {
+    return "QR-kóddal jelentkezem be";
+  }
+
+  if (gpsRequired()) {
+    return "GPS helyellenőrzéssel jelentkezem be";
+  }
+
+  return "Bejelentkezem erre a feladatra";
+}
+
 function renderStatus() {
   if (!currentState) {
     return;
@@ -86,6 +168,10 @@ function renderStatus() {
       kind: currentState.checkedIn ? "ok" : "warn",
     },
     {
+      label: checkinModeLabel(),
+      kind: gpsRequired() ? "warn" : "ok",
+    },
+    {
       label: currentState.upload
         ? `Feltöltve: ${currentState.upload.storedFilename}, ${currentState.upload.fixCount} ponttal`
         : "Nincs feltöltött IGC",
@@ -96,6 +182,7 @@ function renderStatus() {
   elements.statusCards.replaceChildren(...items.map(createStatusPill));
 
   const canAct = Boolean(participantId);
+  elements.checkinButton.textContent = checkinButtonLabel();
   elements.checkinButton.disabled = !canAct || currentState.checkedIn;
   elements.uploadButton.disabled =
     !canAct || !currentState.checkedIn || Boolean(currentState.upload);
@@ -137,10 +224,14 @@ elements.clearParticipantButton.addEventListener("click", async () => {
 
 elements.checkinButton.addEventListener("click", async () => {
   try {
+    if (gpsRequired()) {
+      setFlash("GPS hely lekérése folyamatban…", "success");
+    }
+    const location = gpsRequired() ? await getCurrentLocation() : null;
     currentState = await request(`/api/public/tasks/${token}/checkin`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ participantId }),
+      body: JSON.stringify({ participantId, location, qrCheckinToken }),
     });
     renderStatus();
     setFlash("A bejelentkezés rögzítve.", "success");

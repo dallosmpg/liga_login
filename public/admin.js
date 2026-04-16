@@ -7,6 +7,10 @@ const adminElements = {
   taskForm: document.getElementById("task-form"),
   taskNameInput: document.getElementById("task-name"),
   taskDateInput: document.getElementById("task-date-input"),
+  checkinValidationInput: document.getElementById("checkin-validation"),
+  checkinLatitudeInput: document.getElementById("checkin-latitude"),
+  checkinLongitudeInput: document.getElementById("checkin-longitude"),
+  checkinRadiusInput: document.getElementById("checkin-radius"),
   tasksList: document.getElementById("tasks-list"),
   flash: document.getElementById("admin-flash"),
   refreshButton: document.getElementById("refresh-button"),
@@ -69,6 +73,27 @@ function formatDateTime(value) {
   return value ? new Date(value).toLocaleString("hu-HU") : "-";
 }
 
+function checkinValidationLabel(task) {
+  if (task.checkinValidation === "gps") {
+    return `QR vagy GPS: ${task.checkinLatitude}, ${task.checkinLongitude} / ${task.checkinRadiusMeters} m`;
+  }
+
+  return "QR/link helyellenőrzés nélkül";
+}
+
+function toggleGpsFields() {
+  const gpsEnabled = adminElements.checkinValidationInput.value === "gps";
+  [
+    adminElements.checkinLatitudeInput,
+    adminElements.checkinLongitudeInput,
+    adminElements.checkinRadiusInput,
+  ].forEach((input) => {
+    input.disabled = !gpsEnabled;
+    input.required = gpsEnabled;
+    input.closest(".gps-field").classList.toggle("is-disabled", !gpsEnabled);
+  });
+}
+
 function renderPilotList(task) {
   const section = createElement("div", { className: "pilot-section" });
   const heading = createElement("div", { className: "pilot-list-heading" });
@@ -114,7 +139,17 @@ function renderPilotList(task) {
         : "Nincs IGC",
     );
     status.classList.add(upload ? "ok" : "warn");
-    row.append(pilot, status);
+    const checkinMethod = createChip(
+      checkin.method === "gps"
+        ? `GPS ${checkin.gpsDistanceMeters ?? "?"} m / pontosság ${checkin.gpsAccuracyMeters ?? "?"} m`
+        : checkin.method === "qr"
+          ? "QR-kód"
+        : "QR/link",
+    );
+    checkinMethod.classList.add(
+      checkin.method === "gps" || checkin.method === "qr" ? "ok" : "neutral",
+    );
+    row.append(pilot, checkinMethod, status);
     list.append(row);
   });
 
@@ -150,6 +185,7 @@ function renderTasks(tasks) {
     counts.append(
       createChip(`${task.checkinCount} bejelentkezés`),
       createChip(`${task.uploadCount} feltöltés`),
+      createChip(checkinValidationLabel(task)),
     );
     header.append(titleGroup, counts);
 
@@ -225,9 +261,14 @@ adminElements.taskForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         name: adminElements.taskNameInput.value.trim(),
         taskDate: adminElements.taskDateInput.value,
+        checkinValidation: adminElements.checkinValidationInput.value,
+        checkinLatitude: adminElements.checkinLatitudeInput.value,
+        checkinLongitude: adminElements.checkinLongitudeInput.value,
+        checkinRadiusMeters: adminElements.checkinRadiusInput.value,
       }),
     });
     adminElements.taskForm.reset();
+    toggleGpsFields();
     await loadTasks();
     adminFlash("A feladat létrejött.", "success");
   } catch (error) {
@@ -257,6 +298,8 @@ adminElements.logoutButton.addEventListener("click", async () => {
 
 (async function bootstrap() {
   adminElements.taskDateInput.value = new Date().toISOString().slice(0, 10);
+  toggleGpsFields();
+  adminElements.checkinValidationInput.addEventListener("change", toggleGpsFields);
 
   try {
     await adminRequest("/api/admin/session");

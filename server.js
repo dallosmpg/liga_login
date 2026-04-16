@@ -265,6 +265,174 @@ function normalizeTaskDate(rawValue) {
   return value;
 }
 
+function normalizeCheckinValidation(rawValue) {
+  const value = String(rawValue ?? "open").trim().toLowerCase();
+
+  if (!["open", "gps"].includes(value)) {
+    throw badRequest("Érvénytelen bejelentkezési mód.");
+  }
+
+  return value;
+}
+
+function normalizeCoordinate(rawValue, label, min, max) {
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw badRequest(`${label} érvénytelen.`);
+  }
+
+  return value;
+}
+
+function normalizeRadiusMeters(rawValue) {
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || value < 10 || value > 10000) {
+    throw badRequest("A GPS sugár 10 és 10000 méter közötti érték legyen.");
+  }
+
+  return Math.round(value);
+}
+
+function normalizeTaskCheckinOptions(rawValue = {}) {
+  const checkinValidation = normalizeCheckinValidation(
+    rawValue.checkinValidation,
+  );
+
+  if (checkinValidation !== "gps") {
+    return {
+      checkinValidation,
+      checkinLatitude: null,
+      checkinLongitude: null,
+      checkinRadiusMeters: null,
+    };
+  }
+
+  return {
+    checkinValidation,
+    checkinLatitude: normalizeCoordinate(
+      rawValue.checkinLatitude,
+      "A GPS szélesség",
+      -90,
+      90,
+    ),
+    checkinLongitude: normalizeCoordinate(
+      rawValue.checkinLongitude,
+      "A GPS hosszúság",
+      -180,
+      180,
+    ),
+    checkinRadiusMeters: normalizeRadiusMeters(
+      rawValue.checkinRadiusMeters,
+    ),
+  };
+}
+
+function taskRequiresGps(task) {
+  return task.checkinValidation === "gps";
+}
+
+function hasGpsConfig(task) {
+  return (
+    taskRequiresGps(task) &&
+    Number.isFinite(task.checkinLatitude) &&
+    Number.isFinite(task.checkinLongitude) &&
+    Number.isFinite(task.checkinRadiusMeters)
+  );
+}
+
+function toRadians(value) {
+  return (value * Math.PI) / 180;
+}
+
+function distanceMetersBetween(left, right) {
+  const earthRadiusMeters = 6371000;
+  const deltaLat = toRadians(right.latitude - left.latitude);
+  const deltaLon = toRadians(right.longitude - left.longitude);
+  const leftLat = toRadians(left.latitude);
+  const rightLat = toRadians(right.latitude);
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(leftLat) * Math.cos(rightLat) * Math.sin(deltaLon / 2) ** 2;
+
+  return (
+    2 *
+    earthRadiusMeters *
+    Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
+  );
+}
+
+function normalizeGpsLocation(rawValue = {}) {
+  return {
+    latitude: normalizeCoordinate(rawValue.latitude, "A GPS szélesség", -90, 90),
+    longitude: normalizeCoordinate(
+      rawValue.longitude,
+      "A GPS hosszúság",
+      -180,
+      180,
+    ),
+    accuracyMeters: normalizeCoordinate(
+      rawValue.accuracyMeters,
+      "A GPS pontosság",
+      0,
+      5000,
+    ),
+  };
+}
+
+function validateCheckinLocation(task, rawLocation) {
+  if (!taskRequiresGps(task)) {
+    return { method: "open" };
+  }
+
+  if (!hasGpsConfig(task)) {
+    throw badRequest("A GPS bejelentkezés nincs megfelelően beállítva.", 500);
+  }
+
+  const location = normalizeGpsLocation(rawLocation);
+  const distanceMeters = distanceMetersBetween(
+    {
+      latitude: task.checkinLatitude,
+      longitude: task.checkinLongitude,
+    },
+    location,
+  );
+  const maxAccuracyMeters = Math.max(task.checkinRadiusMeters, 100);
+
+  if (location.accuracyMeters > maxAccuracyMeters) {
+    throw badRequest(
+      `A GPS pontosság túl alacsony (${Math.round(location.accuracyMeters)} m). Próbáld újra jobb vétellel.`,
+    );
+  }
+
+  if (distanceMeters > task.checkinRadiusMeters) {
+    throw badRequest(
+      `A megadott hely ${Math.round(distanceMeters)} m-re van a bejelentkezési ponttól, a megengedett sugár ${task.checkinRadiusMeters} m.`,
+      403,
+    );
+  }
+
+  return {
+    method: "gps",
+    gpsDistanceMeters: Math.round(distanceMeters),
+    gpsAccuracyMeters: Math.round(location.accuracyMeters),
+  };
+}
+
+function validateCheckinAccess(task, body = {}) {
+  if (!taskRequiresGps(task)) {
+    return { method: "open" };
+  }
+
+  if (
+    task.qrCheckinToken &&
+    safeCompare(body.qrCheckinToken, task.qrCheckinToken)
+  ) {
+    return { method: "qr" };
+  }
+
+  return validateCheckinLocation(task, body.location);
+}
+
 function taskDirectory(config, taskId) {
   return path.join(config.storageDir, "tasks", taskId);
 }
@@ -283,6 +451,19 @@ function taskQrMetadataPath(config, taskId) {
 
 function taskPublicUrl(config, task) {
   return `${config.baseUrl}/task/${task.publicToken}`;
+}
+
+function taskQrPublicUrl(config, task) {
+  const publicUrl = taskPublicUrl(config, task);
+  if (!task.qrCheckinToken) {
+    return publicUrl;
+  }
+
+  return `${publicUrl}?qr=${encodeURIComponent(task.qrCheckinToken)}`;
+}
+
+function createQrCheckinToken() {
+  return crypto.randomBytes(18).toString("base64url");
 }
 
 function slugify(value) {
@@ -552,7 +733,7 @@ function securityHeaders(config) {
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader(
       "Permissions-Policy",
-      "camera=(), geolocation=(), microphone=(), payment=()",
+      "camera=(), geolocation=(self), microphone=(), payment=()",
     );
 
     if (config.secureCookies) {
@@ -638,6 +819,20 @@ function createStore(config) {
     listCheckins,
     listUploads,
 
+    ensureTaskQrCheckinToken(taskId) {
+      const task = findTaskById(taskId);
+      if (!task) {
+        return null;
+      }
+
+      if (!task.qrCheckinToken) {
+        task.qrCheckinToken = createQrCheckinToken();
+        persist();
+      }
+
+      return task;
+    },
+
     findCheckin(taskId, participantId) {
       return (
         state.checkins.find(
@@ -647,7 +842,7 @@ function createStore(config) {
       );
     },
 
-    createCheckin(taskId, participantId) {
+    createCheckin(taskId, participantId, metadata = {}) {
       const existing = this.findCheckin(taskId, participantId);
       if (existing) {
         return { record: existing, created: false };
@@ -657,6 +852,9 @@ function createStore(config) {
         taskId,
         participantId,
         checkedInAt: new Date().toISOString(),
+        method: metadata.method ?? "open",
+        gpsDistanceMeters: metadata.gpsDistanceMeters ?? null,
+        gpsAccuracyMeters: metadata.gpsAccuracyMeters ?? null,
       };
       state.checkins.push(record);
       persist();
@@ -710,12 +908,14 @@ function createStore(config) {
       return removed;
     },
 
-    createTask(name, taskDate) {
+    createTask(name, taskDate, checkinOptions = {}) {
       const task = {
         id: crypto.randomUUID(),
         publicToken: crypto.randomUUID(),
+        qrCheckinToken: createQrCheckinToken(),
         name,
         taskDate,
+        ...checkinOptions,
         createdAt: new Date().toISOString(),
       };
 
@@ -810,10 +1010,14 @@ function serializePublicTask(task, store, participantId, config) {
       name: task.name,
       taskDate: task.taskDate,
       publicUrl: taskPublicUrl(config, task),
+      checkinValidation: task.checkinValidation ?? "open",
     },
     participantId,
     checkedIn: Boolean(checkin),
     checkedInAt: checkin?.checkedInAt ?? null,
+    checkinMethod: checkin?.method ?? null,
+    gpsDistanceMeters: checkin?.gpsDistanceMeters ?? null,
+    gpsAccuracyMeters: checkin?.gpsAccuracyMeters ?? null,
     upload: upload
       ? {
           participantId: upload.participantId,
@@ -841,6 +1045,10 @@ function serializeAdminTask(task, store, config) {
     qrUrl: `/api/admin/tasks/${task.id}/qr`,
     zipUrl: `/api/admin/tasks/${task.id}/logs.zip`,
     checkinsCsvUrl: `/api/admin/tasks/${task.id}/checkins.csv`,
+    checkinValidation: task.checkinValidation ?? "open",
+    checkinLatitude: task.checkinLatitude ?? null,
+    checkinLongitude: task.checkinLongitude ?? null,
+    checkinRadiusMeters: task.checkinRadiusMeters ?? null,
     checkinCount: checkins.length,
     uploadCount: uploads.length,
     checkins,
@@ -865,6 +1073,9 @@ function buildCheckinsCsv(task, store) {
     [
       "participant_id",
       "checked_in_at",
+      "checkin_method",
+      "gps_distance_meters",
+      "gps_accuracy_meters",
       "uploaded",
       "uploaded_at",
       "original_name",
@@ -878,6 +1089,9 @@ function buildCheckinsCsv(task, store) {
     rows.push([
       checkin.participantId,
       checkin.checkedInAt,
+      checkin.method ?? "open",
+      checkin.gpsDistanceMeters ?? "",
+      checkin.gpsAccuracyMeters ?? "",
       upload ? "yes" : "no",
       upload?.uploadedAt ?? "",
       upload?.originalName ?? "",
@@ -892,13 +1106,13 @@ function buildCheckinsCsv(task, store) {
 async function generateTaskQr(task, config) {
   const outputPath = taskQrPath(config, task.id);
   const metadataPath = taskQrMetadataPath(config, task.id);
-  const publicUrl = taskPublicUrl(config, task);
+  const qrPublicUrl = taskQrPublicUrl(config, task);
   ensureDir(path.dirname(outputPath));
 
   if (config.disableQrGeneration) {
-    const placeholder = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 180"><rect width="420" height="180" fill="#f7f1e8"/><text x="24" y="48" fill="#202328" font-family="sans-serif" font-size="18">QR generation disabled</text><text x="24" y="92" fill="#202328" font-family="monospace" font-size="13">${publicUrl}</text></svg>`;
+    const placeholder = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 180"><rect width="420" height="180" fill="#f7f1e8"/><text x="24" y="48" fill="#202328" font-family="sans-serif" font-size="18">QR generation disabled</text><text x="24" y="92" fill="#202328" font-family="monospace" font-size="13">${qrPublicUrl}</text></svg>`;
     await fsp.writeFile(outputPath, placeholder, "utf8");
-    await fsp.writeFile(metadataPath, `${publicUrl}\n`, "utf8");
+    await fsp.writeFile(metadataPath, `${qrPublicUrl}\n`, "utf8");
     return outputPath;
   }
 
@@ -910,9 +1124,9 @@ async function generateTaskQr(task, config) {
     "--background=F8F1E7",
     "-o",
     outputPath,
-    publicUrl,
+    qrPublicUrl,
   ]);
-  await fsp.writeFile(metadataPath, `${publicUrl}\n`, "utf8");
+  await fsp.writeFile(metadataPath, `${qrPublicUrl}\n`, "utf8");
 
   return outputPath;
 }
@@ -925,7 +1139,7 @@ function shouldGenerateTaskQr(task, config) {
     return true;
   }
 
-  return fs.readFileSync(metadataPath, "utf8").trim() !== taskPublicUrl(config, task);
+  return fs.readFileSync(metadataPath, "utf8").trim() !== taskQrPublicUrl(config, task);
 }
 
 async function buildZipArchive(task, store, config) {
@@ -1061,7 +1275,15 @@ function createApp(overrides = {}) {
       }
 
       const participantId = normalizeParticipantId(req.body.participantId);
-      const result = store.createCheckin(task.id, participantId);
+      const existingCheckin = store.findCheckin(task.id, participantId);
+      const checkinMetadata = existingCheckin
+        ? {}
+        : validateCheckinAccess(task, req.body);
+      const result = store.createCheckin(
+        task.id,
+        participantId,
+        checkinMetadata,
+      );
 
       res.json({
         message: result.created ? "Sikeres bejelentkezés." : "Már be van jelentkezve.",
@@ -1200,7 +1422,8 @@ function createApp(overrides = {}) {
     asyncRoute(async (req, res) => {
       const name = normalizeTaskName(req.body.name);
       const taskDate = normalizeTaskDate(req.body.taskDate);
-      const task = store.createTask(name, taskDate);
+      const checkinOptions = normalizeTaskCheckinOptions(req.body);
+      const task = store.createTask(name, taskDate, checkinOptions);
 
       try {
         await generateTaskQr(task, config);
@@ -1221,7 +1444,7 @@ function createApp(overrides = {}) {
     "/api/admin/tasks/:taskId/qr",
     requireAdmin,
     asyncRoute(async (req, res) => {
-      const task = store.findTaskById(req.params.taskId);
+      const task = store.ensureTaskQrCheckinToken(req.params.taskId);
       if (!task) {
         throw badRequest("A feladat nem található.", 404);
       }
@@ -1311,10 +1534,15 @@ module.exports = {
   createStore,
   isValidPasswordHash,
   loadEnvFile,
+  distanceMetersBetween,
   normalizeParticipantId,
+  normalizeTaskCheckinOptions,
   requireAdminSameOrigin,
   securityHeaders,
   shouldGenerateTaskQr,
+  taskQrPublicUrl,
+  validateCheckinAccess,
   validateIgcBuffer,
+  validateCheckinLocation,
   verifyPassword,
 };

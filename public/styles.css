@@ -147,7 +147,8 @@ h2 {
 
 .button,
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -226,7 +227,8 @@ button:disabled,
   font-weight: 600;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-height: 48px;
   padding: 0 14px;
@@ -234,6 +236,10 @@ input {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.72);
   color: var(--text);
+}
+
+.gps-field.is-disabled {
+  opacity: 0.48;
 }
 
 .status-stack,
@@ -270,6 +276,10 @@ input {
 .chip.warn {
   color: var(--warn);
   border-color: rgba(186, 74, 35, 0.22);
+}
+
+.chip.neutral {
+  color: var(--muted);
 }
 
 .flash {
@@ -324,7 +334,7 @@ input {
 .pilot-list-heading,
 .pilot-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 14px;
   align-items: center;
 }
