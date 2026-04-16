@@ -1,0 +1,22 @@
+[Unit]
+Description=Liga Login Web App
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/liga_login
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=BASE_URL=https://example.com
+Environment=ADMIN_USERNAME=admin
+Environment=ADMIN_PASSWORD=change-me-now
+Environment=SECURE_COOKIES=true
+Environment=TRUST_PROXY=true
+ExecStart=/usr/bin/node /srv/liga_login/server.js
+Restart=always
+RestartSec=3
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

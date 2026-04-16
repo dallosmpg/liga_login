@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="hu">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Feladat Bejelentkezés</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="shell">
+    <main class="page task-page">
+      <section class="panel glass">
+        <p class="eyebrow">Pilóta bejelentkezés</p>
+        <h1 id="task-title">Feladat betöltése…</h1>
+        <p id="task-date" class="muted"></p>
+        <p class="lede compact">
+          Add meg kétszer a rajtszámodat ellenőrzésként, jelentkezz be a
+          feladatra, majd töltsd fel ehhez a feladathoz az <code>.igc</code>
+          naplódat.
+        </p>
+      </section>
+
+      <section class="grid two">
+        <article class="panel">
+          <h2>Azonosítás</h2>
+          <form id="participant-form" class="stack">
+            <label class="field">
+              <span>Rajtszám</span>
+              <input
+                id="participant-id"
+                name="participantId"
+                maxlength="32"
+                autocomplete="off"
+                placeholder="pl. 117"
+              />
+            </label>
+            <label class="field">
+              <span>Rajtszám megerősítése</span>
+              <input
+                id="participant-id-confirm"
+                name="participantIdConfirm"
+                maxlength="32"
+                autocomplete="off"
+                placeholder="ismét pl. 117"
+              />
+            </label>
+            <div class="actions">
+              <button class="button primary" type="submit">Mentés</button>
+              <button class="button ghost" id="clear-participant" type="button">
+                Törlés
+              </button>
+            </div>
+          </form>
+          <p class="note">
+            A folytatáshoz a két mezőnek pontosan egyeznie kell. Engedélyezett
+            karakterek: betűk, számok, <code>-</code> és <code>_</code>.
+          </p>
+        </article>
+
+        <article class="panel">
+          <h2>Állapot</h2>
+          <div id="status-cards" class="status-stack"></div>
+        </article>
+      </section>
+
+      <section class="grid two">
+        <article class="panel">
+          <h2>1. Bejelentkezés</h2>
+          <p class="muted">
+            A feltöltés csak bejelentkezés után engedélyezett.
+          </p>
+          <button class="button primary wide" id="checkin-button" type="button">
+            Bejelentkezem erre a feladatra
+          </button>
+        </article>
+
+        <article class="panel">
+          <h2>2. Napló feltöltése</h2>
+          <form id="upload-form" class="stack">
+            <label class="field">
+              <span>IGC fájl</span>
+              <input id="igc-file" name="igc" type="file" accept=".igc" />
+            </label>
+            <div class="actions">
+              <button class="button primary" id="upload-button" type="submit">
+                IGC feltöltése
+              </button>
+              <button class="button danger" id="delete-button" type="button">
+                Feltöltött fájl törlése
+              </button>
+            </div>
+          </form>
+          <p class="note">
+            A szerver a fájlt <code>participant_id.igc</code> néven tárolja.
+          </p>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>Üzenetek</h2>
+        <div id="flash" class="flash muted">Még nincs esemény.</div>
+      </section>
+    </main>
+
+    <script src="/task.js" defer></script>
+  </body>
+</html>

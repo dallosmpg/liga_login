@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="hu">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Liga Admin</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="shell">
+    <main class="page admin-page">
+      <section class="panel glass header-row">
+        <div>
+          <p class="eyebrow">Admin</p>
+          <h1>Feladatkezelés</h1>
+          <p class="lede compact">
+            Hozz létre feladatot, töltsd le a QR-kódját, és exportáld a
+            feltöltött naplókat ZIP fájlban.
+          </p>
+        </div>
+        <button class="button ghost hidden" id="logout-button" type="button">
+          Kijelentkezés
+        </button>
+      </section>
+
+      <section id="login-panel" class="panel auth-panel">
+        <h2>Admin belépés</h2>
+        <form id="login-form" class="stack">
+          <label class="field">
+            <span>Felhasználónév</span>
+            <input id="admin-username" autocomplete="username" />
+          </label>
+          <label class="field">
+            <span>Jelszó</span>
+            <input id="admin-password" type="password" autocomplete="current-password" />
+          </label>
+          <button class="button primary" type="submit">Belépés</button>
+        </form>
+      </section>
+
+      <section id="dashboard" class="hidden">
+        <section class="panel">
+          <h2>Új feladat</h2>
+          <form id="task-form" class="grid two compact-grid">
+            <label class="field">
+              <span>Feladat neve</span>
+              <input id="task-name" required placeholder="3. feladat" />
+            </label>
+            <label class="field">
+              <span>Feladat dátuma</span>
+              <input id="task-date-input" required type="date" />
+            </label>
+            <button class="button primary" type="submit">Feladat létrehozása</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="section-header">
+            <h2>Feladatok</h2>
+            <button class="button ghost" id="refresh-button" type="button">Frissítés</button>
+          </div>
+          <div id="tasks-list" class="task-list"></div>
+        </section>
+      </section>
+
+      <section class="panel">
+        <h2>Üzenetek</h2>
+        <div id="admin-flash" class="flash muted">Várakozás admin műveletre.</div>
+      </section>
+    </main>
+
+    <script src="/admin.js" defer></script>
+  </body>
+</html>
