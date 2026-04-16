@@ -297,6 +297,10 @@ function taskQrDownloadName(task) {
   return `${task.taskDate}-${slugify(task.name)}-qr.svg`;
 }
 
+function taskCheckinsDownloadName(task) {
+  return `${task.taskDate}-${slugify(task.name)}-checkins.csv`;
+}
+
 function badRequest(message, status = 400) {
   const error = new Error(message);
   error.status = status;
@@ -832,11 +836,53 @@ function serializeAdminTask(task, store, config) {
     publicUrl: taskPublicUrl(config, task),
     qrUrl: `/api/admin/tasks/${task.id}/qr`,
     zipUrl: `/api/admin/tasks/${task.id}/logs.zip`,
+    checkinsCsvUrl: `/api/admin/tasks/${task.id}/checkins.csv`,
     checkinCount: checkins.length,
     uploadCount: uploads.length,
     checkins,
     uploads,
   };
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, "\"\"")}"`;
+  }
+
+  return text;
+}
+
+function buildCheckinsCsv(task, store) {
+  const uploadsByParticipant = new Map(
+    store.listUploads(task.id).map((upload) => [upload.participantId, upload]),
+  );
+  const rows = [
+    [
+      "participant_id",
+      "checked_in_at",
+      "uploaded",
+      "uploaded_at",
+      "original_name",
+      "flight_date",
+      "fix_count",
+    ],
+  ];
+
+  for (const checkin of store.listCheckins(task.id)) {
+    const upload = uploadsByParticipant.get(checkin.participantId);
+    rows.push([
+      checkin.participantId,
+      checkin.checkedInAt,
+      upload ? "yes" : "no",
+      upload?.uploadedAt ?? "",
+      upload?.originalName ?? "",
+      upload?.flightDate ?? "",
+      upload?.fixCount ?? "",
+    ]);
+  }
+
+  return `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
 }
 
 async function generateTaskQr(task, config) {
@@ -1188,6 +1234,24 @@ function createApp(overrides = {}) {
     }),
   );
 
+  app.get(
+    "/api/admin/tasks/:taskId/checkins.csv",
+    requireAdmin,
+    asyncRoute(async (req, res) => {
+      const task = store.findTaskById(req.params.taskId);
+      if (!task) {
+        throw badRequest("A feladat nem található.", 404);
+      }
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${taskCheckinsDownloadName(task)}"`,
+      );
+      res.send(buildCheckinsCsv(task, store));
+    }),
+  );
+
   app.use(express.static(config.publicDir));
 
   app.use((error, _req, res, _next) => {
@@ -1221,6 +1285,7 @@ if (require.main === module) {
 module.exports = {
   assertProductionConfig,
   createApp,
+  buildCheckinsCsv,
   createConfig,
   createPasswordHash,
   createRateLimiter,

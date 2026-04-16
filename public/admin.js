@@ -65,6 +65,63 @@ function createChip(text) {
   return createElement("span", { className: "chip", textContent: text });
 }
 
+function formatDateTime(value) {
+  return value ? new Date(value).toLocaleString("hu-HU") : "-";
+}
+
+function renderPilotList(task) {
+  const section = createElement("div", { className: "pilot-section" });
+  const heading = createElement("div", { className: "pilot-list-heading" });
+  heading.append(
+    createElement("span", { textContent: "Bejelentkezett pilóták" }),
+    createElement("span", {
+      className: "muted",
+      textContent: `${task.checkinCount} fő`,
+    }),
+  );
+  section.append(heading);
+
+  if (!task.checkins.length) {
+    section.append(
+      createElement("p", {
+        className: "muted",
+        textContent: "Még nincs bejelentkezett pilóta.",
+      }),
+    );
+    return section;
+  }
+
+  const uploadsByParticipant = new Map(
+    task.uploads.map((upload) => [upload.participantId, upload]),
+  );
+  const list = createElement("div", { className: "pilot-list" });
+
+  task.checkins.forEach((checkin) => {
+    const upload = uploadsByParticipant.get(checkin.participantId);
+    const row = createElement("div", { className: "pilot-row" });
+    const pilot = createElement("div", { className: "pilot-main" });
+    pilot.append(
+      createElement("strong", { textContent: checkin.participantId }),
+      createElement("span", {
+        className: "muted",
+        textContent: `Be: ${formatDateTime(checkin.checkedInAt)}`,
+      }),
+    );
+
+    const status = createChip(
+      upload
+        ? `IGC feltöltve: ${formatDateTime(upload.uploadedAt)}`
+        : "Nincs IGC",
+    );
+    status.classList.add(upload ? "ok" : "warn");
+    row.append(pilot, status);
+    list.append(row);
+  });
+
+  section.append(list);
+  return section;
+}
+
 function renderTasks(tasks) {
   adminElements.tasksList.replaceChildren();
 
@@ -121,20 +178,11 @@ function renderTasks(tasks) {
     actions.append(
       createLinkButton("QR letöltése", task.qrUrl, "primary"),
       createLinkButton("ZIP letöltése", task.zipUrl, "secondary"),
+      createLinkButton("Pilótalista CSV", task.checkinsCsvUrl, "secondary"),
       copyButton,
     );
 
-    const checkins = createElement("div", { className: "pill-row" });
-    checkins.append(
-      ...task.checkins.map((item) => createChip(`BE ${item.participantId}`)),
-    );
-
-    const uploads = createElement("div", { className: "pill-row" });
-    uploads.append(
-      ...task.uploads.map((item) => createChip(`IGC ${item.participantId}.igc`)),
-    );
-
-    card.append(header, tokenRow, actions, checkins, uploads);
+    card.append(header, tokenRow, actions, renderPilotList(task));
     return card;
   });
 

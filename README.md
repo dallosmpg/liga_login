@@ -7,7 +7,8 @@ Simple Node/Express web app for a paragliding XC league:
 - They check in for that task.
 - They upload one validated `.igc` file for that task.
 - They can delete that upload and replace it if needed.
-- Admins create tasks, download QR codes, and export all logs for a task as a `.zip`.
+- Admins create tasks, download QR codes, export checked-in pilots as `.csv`,
+  and export all logs for a task as a `.zip`.
 
 ## What the app validates
 

@@ -6,6 +6,7 @@ const path = require("path");
 
 const {
   assertProductionConfig,
+  buildCheckinsCsv,
   createConfig,
   createPasswordHash,
   createRateLimiter,
@@ -117,6 +118,41 @@ test("loadEnvFile applies .env values without overriding real environment", () =
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("buildCheckinsCsv exports checked-in pilots with upload status", () => {
+  const task = { id: "task-1" };
+  const store = {
+    listCheckins(taskId) {
+      assert.equal(taskId, task.id);
+      return [
+        { participantId: "117", checkedInAt: "2026-04-16T10:00:00.000Z" },
+        { participantId: "118", checkedInAt: "2026-04-16T10:05:00.000Z" },
+      ];
+    },
+    listUploads(taskId) {
+      assert.equal(taskId, task.id);
+      return [
+        {
+          participantId: "117",
+          uploadedAt: "2026-04-16T14:00:00.000Z",
+          originalName: "flight, final.igc",
+          flightDate: "2026-04-16",
+          fixCount: 42,
+        },
+      ];
+    },
+  };
+
+  assert.equal(
+    buildCheckinsCsv(task, store),
+    [
+      "participant_id,checked_in_at,uploaded,uploaded_at,original_name,flight_date,fix_count",
+      "117,2026-04-16T10:00:00.000Z,yes,2026-04-16T14:00:00.000Z,\"flight, final.igc\",2026-04-16,42",
+      "118,2026-04-16T10:05:00.000Z,no,,,,",
+      "",
+    ].join("\n"),
+  );
 });
 
 function createMockResponse() {
